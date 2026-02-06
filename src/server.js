@@ -434,24 +434,29 @@ app.get("/", (_req, res) => {
         const res = await fetch("/monitor");
         const data = await res.json();
         const jobs = data.jobs || [];
-        elJobs.innerHTML = `
-          <tr>
-            <th>ID</th><th>Method</th><th>URL</th><th>Interval</th>
-            <th>Active</th><th>Last Run</th><th>Next Run</th>
-          </tr>
-          ${jobs.map(j => `
-            <tr>
-              <td>${j.id}</td>
-              <td><span class="pill">${j.method}</span></td>
-              <td><pre>${j.url}</pre></td>
-              <td>${j.interval_ms} ms</td>
-              <td>${j.active ? "yes" : "no"}</td>
-              <td>${formatMs(j.last_run_at)}</td>
-              <td>${formatMs(j.next_run_at)}</td>
-            </tr>
-          `).join("")}
-        `;
-        elStatus.textContent = `updated ${new Date().toLocaleTimeString()}`;
+
+        let html = "";
+        html += "<tr>";
+        html += "<th>ID</th><th>Method</th><th>URL</th><th>Interval</th>";
+        html += "<th>Active</th><th>Last Run</th><th>Next Run</th>";
+        html += "</tr>";
+
+        html += jobs.map((j) => {
+          return (
+            "<tr>" +
+            "<td>" + j.id + "</td>" +
+            "<td><span class=\"pill\">" + j.method + "</span></td>" +
+            "<td><pre>" + j.url + "</pre></td>" +
+            "<td>" + j.interval_ms + " ms</td>" +
+            "<td>" + (j.active ? "yes" : "no") + "</td>" +
+            "<td>" + formatMs(j.last_run_at) + "</td>" +
+            "<td>" + formatMs(j.next_run_at) + "</td>" +
+            "</tr>"
+          );
+        }).join("");
+
+        elJobs.innerHTML = html;
+        elStatus.textContent = "updated " + new Date().toLocaleTimeString();
       }
       document.getElementById("refresh").addEventListener("click", load);
       load();
