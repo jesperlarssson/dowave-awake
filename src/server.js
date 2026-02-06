@@ -45,6 +45,20 @@ await db.exec(`
   );
 `);
 
+async function ensureJobsColumns() {
+  const columns = await db.all(`PRAGMA table_info(jobs)`);
+  const names = new Set(columns.map((col) => col.name));
+
+  if (!names.has("max_retries")) {
+    await db.exec(`ALTER TABLE jobs ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!names.has("retry_delay_ms")) {
+    await db.exec(`ALTER TABLE jobs ADD COLUMN retry_delay_ms INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
+await ensureJobsColumns();
+
 const timers = new Map();
 
 function nowMs() {
