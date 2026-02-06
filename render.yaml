@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: dowave-awake
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    envVars:
+      - key: SUPABASE_URL
+        value: https://obfdcgcctdfqqrdffxhk.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
