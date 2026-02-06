@@ -19,12 +19,20 @@ curl -X POST http://localhost:3000/jobs \
     "method": "POST",
     "headers": {"x-foo": "bar"},
     "body": {"hello": "world"},
-    "intervalMs": 840000
+    "intervalMs": 840000,
+    "maxRetries": 3,
+    "retryDelayMs": 2000
   }'
 ```
 
 ## Notes
 
 - `intervalMs` is required and is in milliseconds.
+- `maxRetries` and `retryDelayMs` are optional.
 - First run happens `intervalMs` after job creation.
 - Jobs are rehydrated from SQLite on restart.
+
+## Monitoring
+
+- `GET /monitor` returns all jobs
+- `GET /jobs/:id/logs` returns recent run logs

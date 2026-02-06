@@ -22,10 +22,26 @@ await db.exec(`
     body_json TEXT,
     body_is_json INTEGER NOT NULL DEFAULT 0,
     interval_ms INTEGER NOT NULL,
+    max_retries INTEGER NOT NULL DEFAULT 0,
+    retry_delay_ms INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     last_run_at INTEGER,
     next_run_at INTEGER,
     active INTEGER NOT NULL DEFAULT 1
+  );
+`);
+
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS run_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER NOT NULL,
+    success INTEGER NOT NULL,
+    status_code INTEGER,
+    error_message TEXT,
+    attempt_count INTEGER NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
   );
 `);
 
@@ -72,10 +88,40 @@ function buildRequestOptions(job) {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function attemptFetch(job) {
+  const options = buildRequestOptions(job);
+  const response = await fetch(job.url, options);
+  return response.status;
+}
+
 async function runJob(job) {
+  const startedAt = nowMs();
+  let success = 0;
+  let statusCode = null;
+  let errorMessage = null;
+  let attemptCount = 0;
+
   try {
-    const options = buildRequestOptions(job);
-    await fetch(job.url, options);
+    const maxRetries = Number(job.max_retries || 0);
+    const retryDelay = Number(job.retry_delay_ms || 0);
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      attemptCount = attempt + 1;
+      try {
+        statusCode = await attemptFetch(job);
+        success = 1;
+        break;
+      } catch (err) {
+        errorMessage = String(err?.message || err);
+        if (attempt < maxRetries && retryDelay > 0) {
+          await sleep(retryDelay);
+        }
+      }
+    }
   } catch (err) {
     console.error(`Job ${job.id} failed`, err);
   }
@@ -88,6 +134,19 @@ async function runJob(job) {
     lastRun,
     nextRun,
     job.id
+  );
+
+  const finishedAt = nowMs();
+  await db.run(
+    `INSERT INTO run_logs (job_id, started_at, finished_at, success, status_code, error_message, attempt_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    job.id,
+    startedAt,
+    finishedAt,
+    success,
+    statusCode,
+    errorMessage,
+    attemptCount
   );
 
   scheduleJob({ ...job, last_run_at: lastRun, next_run_at: nextRun });
@@ -120,7 +179,7 @@ async function hydrateJobs() {
 }
 
 app.post("/jobs", async (req, res) => {
-  const { url, method, headers, body, intervalMs } = req.body || {};
+  const { url, method, headers, body, intervalMs, maxRetries, retryDelayMs } = req.body || {};
 
   if (!url || intervalMs == null) {
     return res.status(400).json({ error: "url and intervalMs are required" });
@@ -131,14 +190,23 @@ app.post("/jobs", async (req, res) => {
     return res.status(400).json({ error: "intervalMs must be a positive number" });
   }
 
+  const maxRetriesNumber = maxRetries == null ? 0 : Number(maxRetries);
+  const retryDelayNumber = retryDelayMs == null ? 0 : Number(retryDelayMs);
+  if (!Number.isFinite(maxRetriesNumber) || maxRetriesNumber < 0) {
+    return res.status(400).json({ error: "maxRetries must be a non-negative number" });
+  }
+  if (!Number.isFinite(retryDelayNumber) || retryDelayNumber < 0) {
+    return res.status(400).json({ error: "retryDelayMs must be a non-negative number" });
+  }
+
   const createdAt = nowMs();
   const methodNorm = normalizeMethod(method);
   const headersJson = serializeHeaders(headers);
   const { bodyJson, isJson } = serializeBody(body);
 
   const result = await db.run(
-    `INSERT INTO jobs (url, method, headers_json, body_json, body_is_json, interval_ms, created_at, next_run_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO jobs (url, method, headers_json, body_json, body_is_json, interval_ms, max_retries, retry_delay_ms, created_at, next_run_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ,
     url,
     methodNorm,
@@ -146,6 +214,8 @@ app.post("/jobs", async (req, res) => {
     bodyJson,
     isJson,
     intervalNumber,
+    maxRetriesNumber,
+    retryDelayNumber,
     createdAt,
     createdAt + intervalNumber
   );
@@ -159,6 +229,81 @@ app.post("/jobs", async (req, res) => {
 app.get("/jobs", async (_req, res) => {
   const jobs = await db.all(`SELECT * FROM jobs ORDER BY id DESC`);
   res.json(jobs);
+});
+
+app.get("/monitor", async (_req, res) => {
+  const jobs = await db.all(`SELECT * FROM jobs ORDER BY id DESC`);
+  res.json({ jobs });
+});
+
+app.get("/jobs/:id/logs", async (req, res) => {
+  const id = Number(req.params.id);
+  const logs = await db.all(
+    `SELECT * FROM run_logs WHERE job_id = ? ORDER BY id DESC LIMIT 200`,
+    id
+  );
+  res.json(logs);
+});
+
+app.patch("/jobs/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await db.get(`SELECT * FROM jobs WHERE id = ?`, id);
+  if (!existing) return res.status(404).json({ error: "not found" });
+
+  const { url, method, headers, body, intervalMs, maxRetries, retryDelayMs, active } = req.body || {};
+
+  const updatedUrl = url ?? existing.url;
+  const updatedMethod = normalizeMethod(method ?? existing.method);
+
+  const updatedHeadersJson = headers === undefined ? existing.headers_json : serializeHeaders(headers);
+  const bodyPayload = body === undefined ? { bodyJson: existing.body_json, isJson: existing.body_is_json } : serializeBody(body);
+
+  const intervalNumber = intervalMs == null ? existing.interval_ms : Number(intervalMs);
+  if (!Number.isFinite(intervalNumber) || intervalNumber <= 0) {
+    return res.status(400).json({ error: "intervalMs must be a positive number" });
+  }
+
+  const maxRetriesNumber = maxRetries == null ? existing.max_retries : Number(maxRetries);
+  const retryDelayNumber = retryDelayMs == null ? existing.retry_delay_ms : Number(retryDelayMs);
+  if (!Number.isFinite(maxRetriesNumber) || maxRetriesNumber < 0) {
+    return res.status(400).json({ error: "maxRetries must be a non-negative number" });
+  }
+  if (!Number.isFinite(retryDelayNumber) || retryDelayNumber < 0) {
+    return res.status(400).json({ error: "retryDelayMs must be a non-negative number" });
+  }
+
+  const activeNumber = active == null ? existing.active : active ? 1 : 0;
+  const nextRunAt = (existing.last_run_at ?? existing.created_at) + intervalNumber;
+
+  await db.run(
+    `UPDATE jobs
+     SET url = ?, method = ?, headers_json = ?, body_json = ?, body_is_json = ?,
+         interval_ms = ?, max_retries = ?, retry_delay_ms = ?, active = ?, next_run_at = ?
+     WHERE id = ?`,
+    updatedUrl,
+    updatedMethod,
+    updatedHeadersJson,
+    bodyPayload.bodyJson,
+    bodyPayload.isJson,
+    intervalNumber,
+    maxRetriesNumber,
+    retryDelayNumber,
+    activeNumber,
+    nextRunAt,
+    id
+  );
+
+  const updated = await db.get(`SELECT * FROM jobs WHERE id = ?`, id);
+  scheduleJob(updated);
+  res.json(updated);
+});
+
+app.delete("/jobs/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  await db.run(`DELETE FROM jobs WHERE id = ?`, id);
+  if (timers.has(id)) clearTimeout(timers.get(id));
+  timers.delete(id);
+  res.json({ ok: true });
 });
 
 app.post("/jobs/:id/disable", async (req, res) => {
