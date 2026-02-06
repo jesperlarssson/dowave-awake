@@ -342,6 +342,70 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/", (_req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>dowave-awake monitor</title>
+    <style>
+      :root { color-scheme: light; }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding: 24px; }
+      h1 { margin: 0 0 16px 0; font-size: 20px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e2e2e2; }
+      .muted { color: #666; font-size: 12px; }
+      .pill { padding: 2px 8px; border-radius: 999px; background: #f0f0f0; display: inline-block; }
+      .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+      button { padding: 6px 10px; font-size: 12px; }
+      pre { white-space: pre-wrap; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <h1>dowave-awake monitor</h1>
+      <button id="refresh">refresh</button>
+      <span id="status" class="muted"></span>
+    </div>
+    <div class="muted">Shows jobs from /monitor.</div>
+    <table id="jobs"></table>
+    <script>
+      const elJobs = document.getElementById("jobs");
+      const elStatus = document.getElementById("status");
+      const formatMs = (ms) => ms ? new Date(ms).toISOString() : "-";
+      async function load() {
+        elStatus.textContent = "loading...";
+        const res = await fetch("/monitor");
+        const data = await res.json();
+        const jobs = data.jobs || [];
+        elJobs.innerHTML = \`
+          <tr>
+            <th>ID</th><th>Method</th><th>URL</th><th>Interval</th>
+            <th>Active</th><th>Last Run</th><th>Next Run</th>
+          </tr>
+          \${jobs.map(j => \`
+            <tr>
+              <td>\${j.id}</td>
+              <td><span class="pill">\${j.method}</span></td>
+              <td><pre>\${j.url}</pre></td>
+              <td>\${j.interval_ms} ms</td>
+              <td>\${j.active ? "yes" : "no"}</td>
+              <td>\${formatMs(j.last_run_at)}</td>
+              <td>\${formatMs(j.next_run_at)}</td>
+            </tr>
+          \`).join("")}
+        \`;
+        elStatus.textContent = \`updated \${new Date().toLocaleTimeString()}\`;
+      }
+      document.getElementById("refresh").addEventListener("click", load);
+      load();
+      setInterval(load, 15000);
+    </script>
+  </body>
+</html>`);
+});
+
 await hydrateJobs();
 
 app.listen(PORT, () => {
