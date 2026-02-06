@@ -408,6 +408,7 @@ app.get("/", (_req, res) => {
       :root { color-scheme: light; }
       body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding: 24px; }
       h1 { margin: 0 0 16px 0; font-size: 20px; }
+      h2 { margin: 0 0 12px 0; font-size: 16px; }
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e2e2e2; }
       .muted { color: #666; font-size: 12px; }
@@ -415,6 +416,12 @@ app.get("/", (_req, res) => {
       .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
       button { padding: 6px 10px; font-size: 12px; }
       pre { white-space: pre-wrap; word-break: break-word; }
+      .panel { border: 1px solid #e2e2e2; padding: 12px; margin-bottom: 16px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      label { display: block; font-size: 12px; color: #444; margin-bottom: 4px; }
+      input, textarea, select { width: 100%; padding: 6px; font-family: inherit; font-size: 12px; }
+      textarea { min-height: 72px; }
+      .full { grid-column: 1 / -1; }
     </style>
   </head>
   <body>
@@ -423,11 +430,55 @@ app.get("/", (_req, res) => {
       <button id="refresh">refresh</button>
       <span id="status" class="muted"></span>
     </div>
+    <div class="panel">
+      <h2>Create job</h2>
+      <div class="grid">
+        <div>
+          <label>URL</label>
+          <input id="url" placeholder="https://example.com/webhook" />
+        </div>
+        <div>
+          <label>Method</label>
+          <select id="method">
+            <option>GET</option>
+            <option>POST</option>
+            <option>PUT</option>
+            <option>PATCH</option>
+            <option>DELETE</option>
+          </select>
+        </div>
+        <div>
+          <label>Interval (ms)</label>
+          <input id="intervalMs" type="number" placeholder="840000" />
+        </div>
+        <div>
+          <label>Max retries</label>
+          <input id="maxRetries" type="number" placeholder="0" />
+        </div>
+        <div>
+          <label>Retry delay (ms)</label>
+          <input id="retryDelayMs" type="number" placeholder="0" />
+        </div>
+        <div class="full">
+          <label>Headers (JSON)</label>
+          <textarea id="headers" placeholder='{"x-foo":"bar"}'></textarea>
+        </div>
+        <div class="full">
+          <label>Body (JSON or string)</label>
+          <textarea id="body" placeholder='{"hello":"world"}'></textarea>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="create">create</button>
+        <span id="formStatus" class="muted"></span>
+      </div>
+    </div>
     <div class="muted">Shows jobs from /monitor.</div>
     <table id="jobs"></table>
     <script>
       const elJobs = document.getElementById("jobs");
       const elStatus = document.getElementById("status");
+      const elFormStatus = document.getElementById("formStatus");
       const formatMs = (ms) => ms ? new Date(ms).toISOString() : "-";
       async function load() {
         elStatus.textContent = "loading...";
@@ -461,6 +512,42 @@ app.get("/", (_req, res) => {
       document.getElementById("refresh").addEventListener("click", load);
       load();
       setInterval(load, 15000);
+
+      function parseJsonOrText(value) {
+        if (!value || !value.trim()) return undefined;
+        try { return JSON.parse(value); } catch { return value; }
+      }
+
+      document.getElementById("create").addEventListener("click", async () => {
+        elFormStatus.textContent = "creating...";
+        const payload = {
+          url: document.getElementById("url").value.trim(),
+          method: document.getElementById("method").value,
+          intervalMs: Number(document.getElementById("intervalMs").value),
+          maxRetries: Number(document.getElementById("maxRetries").value || 0),
+          retryDelayMs: Number(document.getElementById("retryDelayMs").value || 0),
+          headers: parseJsonOrText(document.getElementById("headers").value),
+          body: parseJsonOrText(document.getElementById("body").value),
+        };
+
+        const res = await fetch("/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          elFormStatus.textContent = err.error || "failed";
+          return;
+        }
+
+        elFormStatus.textContent = "created";
+        document.getElementById("url").value = "";
+        document.getElementById("headers").value = "";
+        document.getElementById("body").value = "";
+        load();
+      });
     </script>
   </body>
 </html>`);
