@@ -1,7 +1,7 @@
 {
   "name": "dowave-awake",
   "version": "1.0.0",
-  "description": "API ping scheduler backed by SQLite",
+  "description": "API ping scheduler backed by Supabase",
   "main": "src/server.js",
   "type": "module",
   "scripts": {
@@ -9,8 +9,7 @@
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "@supabase/supabase-js": "^2.48.1",
+    "express": "^4.19.2"
   }
 }
